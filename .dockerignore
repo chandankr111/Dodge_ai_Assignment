@@ -1,0 +1,11 @@
+# Context = repo root — keep image small and avoid copying host node_modules
+.git
+**/node_modules
+frontend
+backend/node_modules
+backend/dist
+**/.env
+**/.env.*
+!**/.env.example
+*.md
+.DS_Store
