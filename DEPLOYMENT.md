@@ -37,14 +37,16 @@ Commit `backend/database.sqlite` or run `npm run seed` in build with your datase
 
 1. Commit **`backend/database.sqlite`** (it is not listed in `backend/.gitignore`).
 2. In Koyeb: **Create App** → GitHub → your repo.
-3. Use **Docker** build with:
-   - **Dockerfile path:** `backend/Dockerfile`
-   - **Build context / root:** set to **`backend`** if Koyeb asks for it (so the Dockerfile sees `package.json` and `database.sqlite` at context root).
-4. **Port:** `3001` (or set `PORT` in env to match).
-5. **Environment variables:**
+3. Use **Docker** with:
+   - **Build context:** `.` (repository root — Koyeb’s default).
+   - **Dockerfile path:** `backend/Dockerfile` (uses `COPY backend/...` so `package.json` and `database.sqlite` resolve correctly).
+   - **Alternative:** **Dockerfile path:** `Dockerfile` at repo root (same layout; see root `Dockerfile`).
+4. **Wrong setup:** `backend/Dockerfile` with build context **`backend/`** *and* `COPY package.json` with no `backend/` prefix — or root context with `COPY package.json` only — both fail with `package.json` not found at context root.
+5. **Port:** match what Koyeb expects (often **8000** on the platform; the app uses `process.env.PORT`, so set **`PORT`** in Koyeb env to that value if health checks fail).
+6. **Environment variables:**
    - `CORS_ORIGIN` — your frontend URL(s), comma-separated, e.g. `https://your-app.vercel.app`
    - `GEMINI_API_KEY` — optional
-6. Deploy. Test `https://<your-app>.koyeb.app/health` and `/api/graph`.
+7. Deploy. Test `https://<your-app>.koyeb.app/health` and `/api/graph`.
 
 The image uses **`node:20-bookworm-slim`** (not Alpine) and installs `python3` / `make` / `g++` so **`better-sqlite3`** can compile. The app runs **`node dist/index.js`** after `npm run build` (`tsc`).
 

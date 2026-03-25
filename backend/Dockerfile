@@ -1,24 +1,24 @@
-# Koyeb / Docker — use Debian-based image (not Alpine) so better-sqlite3 native builds work.
+# Koyeb: **Build context** = repo root (`.`), **Dockerfile** = `backend/Dockerfile`.
+# COPY paths are relative to the context root, not this file's directory.
 FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-# Native addon build toolchain
+# Toolchain for better-sqlite3 native build
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 
-COPY package.json package-lock.json* ./
+COPY backend/package*.json ./
+
 RUN npm ci
 
-COPY . .
+# Source, config, and database.sqlite (under backend/)
+COPY backend/ .
 
-# Compile TypeScript → dist/ (same as local `npm run build`)
 RUN npm run build
 
 ENV NODE_ENV=production
-ENV PORT=3001
-# DB file is copied next to package root; connection.ts resolves ../../database.sqlite from dist/db → /app/database.sqlite
 ENV DATABASE_PATH=/app/database.sqlite
 
 EXPOSE 3001
