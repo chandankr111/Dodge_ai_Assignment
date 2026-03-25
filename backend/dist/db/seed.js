@@ -7,7 +7,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 // ✅ Update this path to point to your sap-o2c-data folder
 const DATA_PATH = 'C:\\Users\\Chandan kumar\\Downloads\\sap-order-to-cash-dataset\\sap-o2c-data';
-const DB_PATH = path.join(__dirname, '../../../database.sqlite');
+/** Default: backend/database.sqlite. Override with DATABASE_PATH. */
+const envDbPath = process.env.DATABASE_PATH?.trim();
+const DB_PATH = envDbPath
+    ? path.isAbsolute(envDbPath)
+        ? envDbPath
+        : path.resolve(process.cwd(), envDbPath)
+    : path.join(__dirname, '../../database.sqlite');
 // Read all .jsonl files from a folder into an array of objects
 function readJsonlFolder(folderName) {
     const folderPath = path.join(DATA_PATH, folderName);
@@ -31,16 +37,39 @@ function readJsonlFolder(folderName) {
     return records;
 }
 // Run all inserts inside a transaction for speed
-function batchInsert(db, stmt, records) {
+function batchInsert(db, stmt, records, label = "batch") {
+    let errorCount = 0;
+    let insertAttempts = 0;
+    let insertedChanges = 0;
     const run = db.transaction((rows) => {
         for (const row of rows) {
+            insertAttempts++;
             try {
-                stmt.run(row);
+                // better-sqlite3 cannot bind raw booleans; convert them to 0/1.
+                // (The dataset contains boolean fields for INTEGER columns.)
+                const normalizedRow = row
+                    ? Object.fromEntries(Object.entries(row).map(([k, v]) => {
+                        if (typeof v === "boolean")
+                            return [k, v ? 1 : 0];
+                        return [k, v];
+                    }))
+                    : row;
+                const info = stmt.run(normalizedRow);
+                // better-sqlite3: `changes` tells us how many rows were affected.
+                insertedChanges += info.changes || 0;
             }
-            catch { }
+            catch (err) {
+                errorCount++;
+                if (errorCount <= 5) {
+                    // eslint-disable-next-line no-console
+                    console.warn(`  [seed:${label}] insert error (${errorCount}/${rows.length}):`, err?.message ?? err);
+                }
+            }
         }
     });
     run(records);
+    // eslint-disable-next-line no-console
+    console.log(`  ↳ ${label}: insert attempted=${insertAttempts}, errors=${errorCount}, changes=${insertedChanges}`);
 }
 function seed() {
     console.log('🌱 Starting seed...\n');
@@ -100,7 +129,7 @@ function seed() {
       @lastChangeDateTime, @billingDocumentDate, @billingDocumentIsCancelled,
       @cancelledBillingDocument, @totalNetAmount, @transactionCurrency,
       @companyCode, @fiscalYear, @accountingDocument, @soldToParty
-    )`), readJsonlFolder('billing_document_headers'));
+    )`), readJsonlFolder('billing_document_headers'), 'billing_document_headers');
     // ---------- BILLING DOCUMENT ITEMS ----------
     batchInsert(db, db.prepare(`
     INSERT OR REPLACE INTO billing_document_items VALUES (
@@ -108,6 +137,13 @@ function seed() {
       @billingQuantity, @billingQuantityUnit, @netAmount,
       @transactionCurrency, @referenceSdDocument, @referenceSdDocumentItem
     )`), readJsonlFolder('billing_document_items'));
+    // ---------- PRODUCT DESCRIPTIONS ----------
+    // Needed for productDescription fields in the trace responses.
+    batchInsert(db, db.prepare(`
+      INSERT OR REPLACE INTO product_descriptions VALUES (
+        @product, @language, @productDescription
+      )
+    `), readJsonlFolder('product_descriptions'), 'product_descriptions');
     // ---------- BILLING DOCUMENT CANCELLATIONS ----------
     batchInsert(db, db.prepare(`
     INSERT OR REPLACE INTO billing_document_cancellations VALUES (
@@ -149,7 +185,7 @@ function seed() {
       @creationDate, @firstName, @formOfAddress, @industry,
       @lastChangeDate, @lastName, @organizationBpName1,
       @organizationBpName2, @businessPartnerIsBlocked, @isMarkedForArchiving
-    )`), readJsonlFolder('business_partners'));
+    )`), readJsonlFolder('business_partners'), 'business_partners');
     // ---------- BUSINESS PARTNER ADDRESSES ----------
     batchInsert(db, db.prepare(`
     INSERT OR REPLACE INTO business_partner_addresses VALUES (

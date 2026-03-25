@@ -44,8 +44,18 @@ router.get('/node/:type/:id', (req, res) => {
             };
         }
         else if (type === 'pay') {
-            data = db.prepare(`SELECT * FROM payments_accounts_receivable 
-         WHERE companyCode || '-' || fiscalYear || '-' || accountingDocument = ?`).get(id);
+            data = db.prepare(`SELECT * FROM payments_accounts_receivable
+         WHERE companyCode || '-' || fiscalYear || '-' || accountingDocument || '-' || accountingDocumentItem = ?`).get(id);
+        }
+        else if (type === 'prod') {
+            data = {
+                product: db.prepare(`SELECT * FROM products WHERE product = ?`).get(id),
+                descriptions: db.prepare(`SELECT * FROM product_descriptions WHERE product = ?`).all(id)
+            };
+        }
+        else if (type === 'jnl') {
+            data = db.prepare(`SELECT * FROM journal_entry_items_ar
+         WHERE companyCode || '-' || fiscalYear || '-' || accountingDocument || '-' || accountingDocumentItem = ?`).get(id);
         }
         if (!data)
             return res.status(404).json({ error: 'Node not found' });

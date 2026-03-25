@@ -1,0 +1,4 @@
+# Cloudflare Pages (optional). Connect repo in dashboard, or deploy dist manually.
+name = "dodge-ai-o2c-frontend"
+compatibility_date = "2024-11-01"
+pages_build_output_dir = "dist"

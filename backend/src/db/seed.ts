@@ -9,7 +9,13 @@ const __dirname = path.dirname(__filename);
 
 // ✅ Update this path to point to your sap-o2c-data folder
 const DATA_PATH = 'C:\\Users\\Chandan kumar\\Downloads\\sap-order-to-cash-dataset\\sap-o2c-data';
-const DB_PATH   = path.join(__dirname, '../../../database.sqlite');
+/** Default: backend/database.sqlite. Override with DATABASE_PATH. */
+const envDbPath = process.env.DATABASE_PATH?.trim();
+const DB_PATH = envDbPath
+  ? path.isAbsolute(envDbPath)
+    ? envDbPath
+    : path.resolve(process.cwd(), envDbPath)
+  : path.join(__dirname, '../../database.sqlite');
 
 // Read all .jsonl files from a folder into an array of objects
 function readJsonlFolder(folderName: string): any[] {
