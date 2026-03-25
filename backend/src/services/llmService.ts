@@ -1,7 +1,42 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getDb } from '../db/connection.js';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+type LLMProvider = 'groq' | 'gemini';
+
+function getLLMConfig(): {
+  provider: LLMProvider;
+  geminiApiKey?: string;
+  geminiModel: string;
+  groqApiKey?: string;
+  groqModel: string;
+} {
+  const geminiApiKey = process.env.GEMINI_API_KEY?.trim();
+  const groqApiKey = process.env.GROQ_API_KEY?.trim();
+
+  const providerFromEnv = process.env.LLM_PROVIDER?.trim().toLowerCase();
+  const provider: LLMProvider =
+    providerFromEnv === 'groq' || providerFromEnv === 'gemini'
+      ? (providerFromEnv as LLMProvider)
+      : groqApiKey
+        ? 'groq'
+        : 'gemini';
+
+  const config: {
+    provider: LLMProvider;
+    geminiApiKey?: string;
+    geminiModel: string;
+    groqApiKey?: string;
+    groqModel: string;
+  } = {
+    provider,
+    geminiModel: process.env.GEMINI_MODEL?.trim() || 'gemini-flash-latest',
+    groqModel: process.env.GROQ_MODEL?.trim() || 'llama-3.3-70b-versatile'
+  };
+
+  if (geminiApiKey) config.geminiApiKey = geminiApiKey;
+  if (groqApiKey) config.groqApiKey = groqApiKey;
+  return config;
+}
 let llmDisabledForProcess = false;
 let llmDisableReasonLogged = false;
 
@@ -10,20 +45,83 @@ function isInvalidApiKeyError(err: unknown): boolean {
   if (typeof err === 'object' && err !== null) {
     const maybeError = err as { message?: unknown };
     if (typeof maybeError.message === 'string') {
-      return maybeError.message.includes('API key not valid');
+      const msg = maybeError.message.toLowerCase();
+      return (
+        msg.includes('api key not valid') ||
+        msg.includes('invalid api key') ||
+        msg.includes('api_key_invalid') ||
+        msg.includes('authentication') ||
+        msg.includes('not authorized') ||
+        msg.includes('permission denied') ||
+        msg.includes('401')
+      );
     }
   }
   return false;
 }
 
-function disableLLMWithWarning(): void {
+function disableLLMWithWarning(reason?: unknown): void {
   llmDisabledForProcess = true;
   if (!llmDisableReasonLogged) {
+    // Avoid logging secrets; only log a trimmed error message.
+    const maybeMsg = (() => {
+      if (typeof reason === 'object' && reason !== null) {
+        const r = reason as { message?: unknown };
+        return typeof r.message === 'string' ? r.message.slice(0, 400) : undefined;
+      }
+      return undefined;
+    })();
+
     console.warn(
-      'Gemini API key is invalid. LLM features disabled for this process; using fallback summaries.'
+      maybeMsg
+        ? `LLM API key is invalid/unauthorized (${maybeMsg}). LLM features disabled for this process; using fallback summaries.`
+        : 'LLM API key is invalid/unauthorized. LLM features disabled for this process; using fallback summaries.'
     );
     llmDisableReasonLogged = true;
   }
+}
+
+async function generateWithGroq(
+  userPrompt: string,
+  opts: { maxTokens: number; temperature: number }
+): Promise<string> {
+  const { groqApiKey, groqModel } = getLLMConfig();
+  if (!groqApiKey) throw new Error('GROQ_API_KEY is missing');
+
+  const body = {
+    model: groqModel,
+    messages: [{ role: 'user', content: userPrompt }],
+    temperature: opts.temperature,
+    max_tokens: opts.maxTokens
+  };
+
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${groqApiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+
+  const text = await res.text();
+  let json: any = null;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    // keep json as null; we'll use raw text for error message
+  }
+
+  if (!res.ok) {
+    const apiMessage =
+      json?.error?.message ||
+      json?.message ||
+      text ||
+      `Groq API error (status ${res.status})`;
+    throw new Error(apiMessage);
+  }
+
+  return (json?.choices?.[0]?.message?.content || '').toString().trim();
 }
 
 // ================================================================
@@ -926,7 +1024,7 @@ async function generateSQL(question: string): Promise<string> {
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const { provider, geminiApiKey, geminiModel } = getLLMConfig();
 
     const prompt = `
 You are an expert SQLite query generator for a SAP Order-to-Cash database.
@@ -948,13 +1046,24 @@ Question: "${question}"
 SQL:
 `;
 
+    if (provider === 'groq') {
+      const sql = await generateWithGroq(prompt, { maxTokens: 256, temperature: 0 });
+      return sql.replace(/```sql/gi, '').replace(/```/g, '').trim();
+    }
+
+    if (!geminiApiKey) {
+      throw new Error('GEMINI_API_KEY is missing');
+    }
+
+    const genAI = new GoogleGenerativeAI(geminiApiKey);
+    const model = genAI.getGenerativeModel({ model: geminiModel });
     const result = await model.generateContent(prompt);
     let sql = result.response.text().trim();
     sql = sql.replace(/```sql/gi, '').replace(/```/g, '').trim();
     return sql;
   } catch (err) {
     if (isInvalidApiKeyError(err)) {
-      disableLLMWithWarning();
+      disableLLMWithWarning(err);
     } else {
       console.error('LLM API Error in generateSQL:', err);
     }
@@ -1006,7 +1115,7 @@ async function summarizeResults(
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const { provider, geminiApiKey, geminiModel } = getLLMConfig();
 
     const isArray = Array.isArray(data);
     const rowCount = isArray ? data.length : data?.flow?.length || 0;
@@ -1033,11 +1142,21 @@ Write a clear, concise answer in plain English:
 - Sound like a business analyst summarizing findings
 `;
 
+    if (provider === 'groq') {
+      return generateWithGroq(prompt, { maxTokens: 400, temperature: 0.2 });
+    }
+
+    if (!geminiApiKey) {
+      throw new Error('GEMINI_API_KEY is missing');
+    }
+
+    const genAI = new GoogleGenerativeAI(geminiApiKey);
+    const model = genAI.getGenerativeModel({ model: geminiModel });
     const result = await model.generateContent(prompt);
     return result.response.text().trim();
   } catch (err) {
     if (isInvalidApiKeyError(err)) {
-      disableLLMWithWarning();
+      disableLLMWithWarning(err);
     } else {
       console.error('LLM API Error:', err);
     }

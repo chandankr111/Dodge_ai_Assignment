@@ -1,26 +1,27 @@
-# Koyeb: **Build context** = repo root (`.`), **Dockerfile** = `backend/Dockerfile`.
-# COPY paths are relative to the context root, not this file's directory.
 FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-# Toolchain for better-sqlite3 native build
+# Install build tools (for better-sqlite3)
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 
-COPY backend/package*.json ./
+# Copy package files
+COPY package*.json ./
 
 RUN npm ci
 
-# Source, config, and database.sqlite (under backend/)
-COPY backend/ .
+# Copy entire backend code (including database.sqlite)
+COPY . .
 
+# Build TypeScript
 RUN npm run build
 
 ENV NODE_ENV=production
+ENV PORT=8000
 ENV DATABASE_PATH=/app/database.sqlite
 
-EXPOSE 3001
+EXPOSE 8000
 
 CMD ["node", "dist/index.js"]
