@@ -1,6 +1,10 @@
 import axios from "axios";
 
-const BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3001";
+// Normalize base URL to avoid double slashes when env ends with `/`.
+const BASE = (import.meta.env.VITE_API_BASE_URL ?? "https://dodgeaibackend-production.up.railway.app").replace(
+  /\/+$/,
+  ""
+);
 
 export const api = {
   getGraph: () => axios.get(`${BASE}/api/graph`).then((r) => r.data),
